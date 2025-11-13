@@ -1,0 +1,182 @@
+name: Simple Flutter Build
+
+on:
+  # Manual trigger - you can run this anytime
+  workflow_dispatch:
+    inputs:
+      module_name:
+        description: 'Module name (e.g., payment-module)'
+        required: true
+        default: 'test-module'
+      git_url:
+        description: 'Git URL of module'
+        required: true
+        default: 'https://github.com/thanakhi/example-module.git'
+      branch_tag:
+        description: 'Branch or tag name'
+        required: true
+        default: 'main'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+      
+      - name: Show build info
+        run: |
+          echo "Building module: ${{ github.event.inputs.module_name }}"
+          echo "From: ${{ github.event.inputs.git_url }}"
+          echo "Branch/Tag: ${{ github.event.inputs.branch_tag }}"
+          echo "Started at: $(date)"
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+      
+      - name: Clone module repository
+        run: |
+          echo "Cloning module repository..."
+          git clone ${{ github.event.inputs.git_url }} ./modules/${{ github.event.inputs.module_name }}
+          cd ./modules/${{ github.event.inputs.module_name }}
+          git checkout ${{ github.event.inputs.branch_tag }}
+          
+          # Get commit SHA
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_ENV
+          echo "Module at commit: $COMMIT_SHA"
+      
+      - name: Create/Update pubspec.yaml
+        run: |
+          echo "Updating pubspec.yaml..."
+          
+          # Create a simple pubspec.yaml if it doesn't exist
+          if [ ! -f pubspec.yaml ]; then
+            cat > pubspec.yaml << 'EOF'
+          name: poc_build_app
+          description: POC Build App
+          version: 1.0.0+1
+          
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          
+          dependencies:
+            flutter:
+              sdk: flutter
+          
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+          
+          flutter:
+            uses-material-design: true
+          EOF
+          fi
+          
+          echo "Current pubspec.yaml:"
+          cat pubspec.yaml
+      
+      - name: Get dependencies
+        run: |
+          flutter pub get
+      
+      - name: Build APK
+        run: |
+          # Create a simple main.dart if it doesn't exist
+          mkdir -p lib
+          if [ ! -f lib/main.dart ]; then
+            cat > lib/main.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          
+          void main() {
+            runApp(const MyApp());
+          }
+          
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+          
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'POC Build App',
+                theme: ThemeData(
+                  colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+                  useMaterial3: true,
+                ),
+                home: const MyHomePage(),
+              );
+            }
+          }
+          
+          class MyHomePage extends StatelessWidget {
+            const MyHomePage({super.key});
+          
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+                  title: const Text('POC Build App'),
+                ),
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      const Text(
+                        'Build successful!',
+                        style: TextStyle(fontSize: 24),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Module: ${{ github.event.inputs.module_name }}',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                      Text(
+                        'Commit: ${COMMIT_SHA.substring(0, 8)}',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
+          EOF
+          fi
+          
+          echo "Building APK..."
+          flutter build apk --release
+          
+          # Rename APK with timestamp and commit
+          BUILD_TIME=$(date +%Y%m%d_%H%M%S)
+          mkdir -p build/outputs
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             build/outputs/app-${{ github.event.inputs.module_name }}-$BUILD_TIME-${COMMIT_SHA:0:8}.apk
+          
+          echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_ENV
+          echo "APK_NAME=app-${{ github.event.inputs.module_name }}-$BUILD_TIME-${COMMIT_SHA:0:8}.apk" >> $GITHUB_ENV
+      
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_NAME }}
+          path: build/outputs/${{ env.APK_NAME }}
+          retention-days: 30
+      
+      - name: Build summary
+        run: |
+          echo "## 🎉 Build Completed Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Module:** ${{ github.event.inputs.module_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Git URL:** ${{ github.event.inputs.git_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch/Tag:** ${{ github.event.inputs.branch_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Time:** $BUILD_TIME" >> $GITHUB_STEP_SUMMARY
+          echo "**APK Name:** $APK_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Download APK" >> $GITHUB_STEP_SUMMARY
+          echo "Go to the **Artifacts** section above to download your APK" >> $GITHUB_STEP_SUMMARY
